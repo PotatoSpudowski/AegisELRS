@@ -19,58 +19,87 @@ extern "C" {
 }
 
 static uint8_t murmur_key[16];
-static uint32_t murmur_tx_counter;
-static uint32_t murmur_rx_expected;
+static uint32_t murmur_nonce_epoch;
+static uint8_t  murmur_prev_nonce;
+static bool     murmur_is_tx = false;
+static bool     murmur_key_ready = false;
 static murmur_replay_t murmur_replay_state;
-static bool murmur_key_ready = false;
 
 static ValidatePacketCrc_t OriginalValidateCrc;
 static GeneratePacketCrc_t OriginalGenerateCrc;
 
-void MurmurInitFromUid(const uint8_t uid[6])
+/* Derive 32-bit counter from OtaNonce + epoch.
+ * Both TX and RX track OtaNonce identically (incremented every slot),
+ * so both derive the same counter for any given slot. */
+static uint32_t ICACHE_RAM_ATTR MurmurGetCounter()
+{
+    /* Detect OtaNonce wraparound (255 -> 0) */
+    if (OtaNonce < murmur_prev_nonce && (murmur_prev_nonce - OtaNonce) > 128) {
+        murmur_nonce_epoch++;
+    }
+    murmur_prev_nonce = OtaNonce;
+    return (murmur_nonce_epoch << 8) | (uint32_t)OtaNonce;
+}
+
+void MurmurInitFromUid(const uint8_t uid[6], bool is_tx)
 {
     uint8_t zeros[16] = {0};
     uint8_t master[16];
     murmur_cmac(zeros, uid, 6, master);
     murmur_cmac(master, (const uint8_t *)"murmur-enc", 10, murmur_key);
 
-    murmur_tx_counter = 0;
-    murmur_rx_expected = 0;
+    murmur_nonce_epoch = 0;
+    murmur_prev_nonce = 0;
+    murmur_is_tx = is_tx;
     murmur_replay_init(&murmur_replay_state);
     murmur_key_ready = true;
 }
 
+/* Reset epoch on SYNC resync or connection loss.
+ * Must be called whenever OtaNonce is set (not just incremented). */
+void MurmurResetCounter()
+{
+    murmur_nonce_epoch = 0;
+    murmur_prev_nonce = OtaNonce;
+    murmur_replay_init(&murmur_replay_state);
+}
+
 static void ICACHE_RAM_ATTR MurmurGeneratePacketCrc(OTA_Packet_s * const otaPktPtr)
 {
-    uint8_t ptype = ((uint8_t*)otaPktPtr)[0] & 0x03;
+    uint8_t header = ((uint8_t*)otaPktPtr)[0];
+    uint8_t ptype = header & 0x03;
 
     if (ptype == PACKET_TYPE_SYNC || !murmur_key_ready) {
         OriginalGenerateCrc(otaPktPtr);
         return;
     }
 
+    uint32_t counter = MurmurGetCounter();
+    /* TX sends uplink (dir=0), RX sends downlink (dir=1) */
+    uint8_t direction = murmur_is_tx ? 0 : 1;
     uint8_t *payload = ((uint8_t*)otaPktPtr) + 1;
 
     if (OtaIsFullRes) {
         uint8_t payload_len = OTA8_CRC_CALC_LEN - 1;
-        uint16_t mac = murmur_encrypt_packet(murmur_key, murmur_tx_counter,
-                                             ptype, payload, payload_len, 16);
+        uint16_t mac = murmur_encrypt_packet(murmur_key, counter,
+                                             header, direction,
+                                             payload, payload_len, 16);
         otaPktPtr->full.crc = mac;
     } else {
         otaPktPtr->std.crcHigh = 0;
         uint8_t payload_len = OTA4_CRC_CALC_LEN - 1;
-        uint16_t mac = murmur_encrypt_packet(murmur_key, murmur_tx_counter,
-                                             ptype, payload, payload_len, 14);
+        uint16_t mac = murmur_encrypt_packet(murmur_key, counter,
+                                             header, direction,
+                                             payload, payload_len, 14);
         otaPktPtr->std.crcHigh = (mac >> 8);
         otaPktPtr->std.crcLow = mac & 0xFF;
     }
-
-    murmur_tx_counter++;
 }
 
 static bool ICACHE_RAM_ATTR MurmurValidatePacketCrc(OTA_Packet_s * const otaPktPtr)
 {
-    uint8_t ptype = ((uint8_t*)otaPktPtr)[0] & 0x03;
+    uint8_t header = ((uint8_t*)otaPktPtr)[0];
+    uint8_t ptype = header & 0x03;
 
     if (ptype == PACKET_TYPE_SYNC || !murmur_key_ready) {
         return OriginalValidateCrc(otaPktPtr);
@@ -92,16 +121,22 @@ static bool ICACHE_RAM_ATTR MurmurValidatePacketCrc(OTA_Packet_s * const otaPktP
         mac_bits = 14;
     }
 
-    uint32_t counter = murmur_reconstruct_counter(murmur_rx_expected, OtaNonce);
+    uint32_t counter = MurmurGetCounter();
+    /* TX validates downlink (dir=1), RX validates uplink (dir=0) */
+    uint8_t direction = murmur_is_tx ? 1 : 0;
+
+    /* Try primary counter, then +/-1 epoch for edge cases around wraps */
     uint32_t candidates[3] = { counter, counter + 256, (counter >= 256) ? counter - 256 : 0xFFFFFFFF };
 
     for (int i = 0; i < 3; i++) {
         if (candidates[i] == 0xFFFFFFFF) continue;
-        if (murmur_decrypt_packet(murmur_key, candidates[i], ptype,
+        if (murmur_decrypt_packet(murmur_key, candidates[i], header, direction,
                                   payload, payload_len, received_mac, mac_bits)) {
             if (!murmur_replay_check(&murmur_replay_state, candidates[i]))
                 return false;
-            murmur_rx_expected = candidates[i] + 1;
+            /* Correct epoch if a fallback candidate matched */
+            if (i == 1) murmur_nonce_epoch++;
+            else if (i == 2) murmur_nonce_epoch--;
             return true;
         }
     }

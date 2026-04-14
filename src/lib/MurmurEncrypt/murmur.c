@@ -97,7 +97,7 @@ void murmur_cmac(const uint8_t key[16],
 /* ------------------------------------------------------------------ */
 
 static void ctr_encrypt(const uint8_t key[16], uint32_t counter,
-                        uint8_t packet_type,
+                        uint8_t packet_type, uint8_t direction,
                         uint8_t *data, uint8_t data_len)
 {
     uint8_t nonce[16];
@@ -109,6 +109,7 @@ static void ctr_encrypt(const uint8_t key[16], uint32_t counter,
     nonce[2] = (uint8_t)(counter >> 8);
     nonce[3] = (uint8_t)(counter);
     nonce[4] = packet_type;
+    nonce[5] = direction;
 
     aes128_encrypt(key, nonce, keystream);
 
@@ -144,20 +145,21 @@ void murmur_derive_keys(const char *binding_phrase,
 /* ------------------------------------------------------------------ */
 
 static uint16_t compute_mac(const uint8_t key[16], uint32_t counter,
-                            uint8_t packet_type,
+                            uint8_t packet_type, uint8_t direction,
                             const uint8_t *data, uint8_t data_len,
                             uint8_t mac_bits)
 {
-    uint8_t buf[5 + 16];
+    uint8_t buf[6 + 16];
     uint8_t mac[16];
-    uint32_t buf_len = 5 + data_len;
+    uint32_t buf_len = 6 + data_len;
 
     buf[0] = (uint8_t)(counter >> 24);
     buf[1] = (uint8_t)(counter >> 16);
     buf[2] = (uint8_t)(counter >> 8);
     buf[3] = (uint8_t)(counter);
     buf[4] = packet_type;
-    memcpy(buf + 5, data, data_len);
+    buf[5] = direction;
+    memcpy(buf + 6, data, data_len);
 
     murmur_cmac(key, buf, buf_len, mac);
 
@@ -171,29 +173,31 @@ static uint16_t compute_mac(const uint8_t key[16], uint32_t counter,
 uint16_t murmur_encrypt_packet(const uint8_t enc_key[16],
                                uint32_t counter,
                                uint8_t packet_type,
+                               uint8_t direction,
                                uint8_t *payload, uint8_t payload_len,
                                uint8_t mac_bits)
 {
-    ctr_encrypt(enc_key, counter, packet_type, payload, payload_len);
+    ctr_encrypt(enc_key, counter, packet_type, direction, payload, payload_len);
 
-    return compute_mac(enc_key, counter, packet_type,
+    return compute_mac(enc_key, counter, packet_type, direction,
                        payload, payload_len, mac_bits);
 }
 
 bool murmur_decrypt_packet(const uint8_t enc_key[16],
                            uint32_t counter,
                            uint8_t packet_type,
+                           uint8_t direction,
                            uint8_t *payload, uint8_t payload_len,
                            uint16_t received_mac, uint8_t mac_bits)
 {
-    uint16_t expected = compute_mac(enc_key, counter, packet_type,
+    uint16_t expected = compute_mac(enc_key, counter, packet_type, direction,
                                     payload, payload_len, mac_bits);
 
     uint16_t diff = expected ^ received_mac;
     if (diff != 0)
         return false;
 
-    ctr_encrypt(enc_key, counter, packet_type, payload, payload_len);
+    ctr_encrypt(enc_key, counter, packet_type, direction, payload, payload_len);
 
     return true;
 }

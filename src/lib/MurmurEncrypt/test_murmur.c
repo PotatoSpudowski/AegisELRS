@@ -131,9 +131,9 @@ static void test_roundtrip_pkt4(void)
     uint8_t orig[6] = {0xAA,0xBB,0xCC,0xDD,0xEE,0xFF};
     uint8_t payload[6];
     memcpy(payload, orig, 6);
-    uint16_t mac = murmur_encrypt_packet(key, 42, 1, payload, 6, 14);
+    uint16_t mac = murmur_encrypt_packet(key, 42, 1, 0, payload, 6, 14);
     ASSERT_EQ(memcmp(payload, orig, 6) != 0, 1, "not encrypted");
-    bool ok = murmur_decrypt_packet(key, 42, 1, payload, 6, mac, 14);
+    bool ok = murmur_decrypt_packet(key, 42, 1, 0, payload, 6, mac, 14);
     ASSERT_EQ(ok, true, "decrypt failed");
     ASSERT_MEM_EQ(payload, orig, 6, "plaintext mismatch");
     PASS();
@@ -146,8 +146,8 @@ static void test_roundtrip_pkt8(void)
     uint8_t orig[10] = {0x01,0x23,0x45,0x67,0x89,0xAB,0xCD,0xEF,0xFE,0xDC};
     uint8_t payload[10];
     memcpy(payload, orig, 10);
-    uint16_t mac = murmur_encrypt_packet(key, 1000, 0, payload, 10, 16);
-    bool ok = murmur_decrypt_packet(key, 1000, 0, payload, 10, mac, 16);
+    uint16_t mac = murmur_encrypt_packet(key, 1000, 0, 0, payload, 10, 16);
+    bool ok = murmur_decrypt_packet(key, 1000, 0, 0, payload, 10, mac, 16);
     ASSERT_EQ(ok, true, "decrypt failed");
     ASSERT_MEM_EQ(payload, orig, 10, "plaintext mismatch");
     PASS();
@@ -159,8 +159,8 @@ static void test_wrong_key(void)
     uint8_t k1[16] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
     uint8_t k2[16] = {16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1};
     uint8_t p[6] = {0x11,0x22,0x33,0x44,0x55,0x66};
-    uint16_t mac = murmur_encrypt_packet(k1, 0, 1, p, 6, 14);
-    ASSERT_EQ(murmur_decrypt_packet(k2, 0, 1, p, 6, mac, 14), false, "should reject");
+    uint16_t mac = murmur_encrypt_packet(k1, 0, 1, 0, p, 6, 14);
+    ASSERT_EQ(murmur_decrypt_packet(k2, 0, 1, 0, p, 6, mac, 14), false, "should reject");
     PASS();
 }
 
@@ -169,8 +169,8 @@ static void test_wrong_counter(void)
     TEST("Wrong counter: rejected");
     uint8_t key[16] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
     uint8_t p[6] = {0xAA,0xBB,0xCC,0xDD,0xEE,0xFF};
-    uint16_t mac = murmur_encrypt_packet(key, 100, 1, p, 6, 14);
-    ASSERT_EQ(murmur_decrypt_packet(key, 101, 1, p, 6, mac, 14), false, "should reject");
+    uint16_t mac = murmur_encrypt_packet(key, 100, 1, 0, p, 6, 14);
+    ASSERT_EQ(murmur_decrypt_packet(key, 101, 1, 0, p, 6, mac, 14), false, "should reject");
     PASS();
 }
 
@@ -179,9 +179,9 @@ static void test_tampered(void)
     TEST("Tampered ciphertext: rejected");
     uint8_t key[16] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
     uint8_t p[6] = {0xAA,0xBB,0xCC,0xDD,0xEE,0xFF};
-    uint16_t mac = murmur_encrypt_packet(key, 50, 1, p, 6, 14);
+    uint16_t mac = murmur_encrypt_packet(key, 50, 1, 0, p, 6, 14);
     p[3] ^= 0x01;
-    ASSERT_EQ(murmur_decrypt_packet(key, 50, 1, p, 6, mac, 14), false, "should reject");
+    ASSERT_EQ(murmur_decrypt_packet(key, 50, 1, 0, p, 6, mac, 14), false, "should reject");
     PASS();
 }
 
@@ -191,8 +191,30 @@ static void test_different_counters(void)
     uint8_t key[16] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
     uint8_t p1[6] = {0xAA,0xBB,0xCC,0xDD,0xEE,0xFF};
     uint8_t p2[6] = {0xAA,0xBB,0xCC,0xDD,0xEE,0xFF};
-    murmur_encrypt_packet(key, 0, 1, p1, 6, 14);
-    murmur_encrypt_packet(key, 1, 1, p2, 6, 14);
+    murmur_encrypt_packet(key, 0, 1, 0, p1, 6, 14);
+    murmur_encrypt_packet(key, 1, 1, 0, p2, 6, 14);
+    ASSERT_EQ(memcmp(p1, p2, 6) != 0, 1, "should differ");
+    PASS();
+}
+
+static void test_wrong_direction(void)
+{
+    TEST("Wrong direction: rejected");
+    uint8_t key[16] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
+    uint8_t p[6] = {0xAA,0xBB,0xCC,0xDD,0xEE,0xFF};
+    uint16_t mac = murmur_encrypt_packet(key, 42, 1, 0, p, 6, 14);
+    ASSERT_EQ(murmur_decrypt_packet(key, 42, 1, 1, p, 6, mac, 14), false, "should reject");
+    PASS();
+}
+
+static void test_direction_different_ciphertext(void)
+{
+    TEST("Different directions: different ciphertext");
+    uint8_t key[16] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
+    uint8_t p1[6] = {0xAA,0xBB,0xCC,0xDD,0xEE,0xFF};
+    uint8_t p2[6] = {0xAA,0xBB,0xCC,0xDD,0xEE,0xFF};
+    murmur_encrypt_packet(key, 0, 1, 0, p1, 6, 14);
+    murmur_encrypt_packet(key, 0, 1, 1, p2, 6, 14);
     ASSERT_EQ(memcmp(p1, p2, 6) != 0, 1, "should differ");
     PASS();
 }
@@ -356,11 +378,11 @@ static void test_full_flow(void)
     for (uint32_t tx_ctr = 0; tx_ctr < 10; tx_ctr++) {
         uint8_t payload[6];
         memcpy(payload, rc_data, 6);
-        uint16_t mac = murmur_encrypt_packet(enc_key, tx_ctr, 1, payload, 6, 14);
+        uint16_t mac = murmur_encrypt_packet(enc_key, tx_ctr, 1, 0, payload, 6, 14);
         uint8_t nonce = (uint8_t)(tx_ctr & 0xFF);
         uint32_t rx_ctr = murmur_reconstruct_counter(tx_ctr, nonce);
         ASSERT_EQ(murmur_replay_check(&replay, rx_ctr), true, "fresh");
-        bool ok = murmur_decrypt_packet(enc_key, rx_ctr, 1, payload, 6, mac, 14);
+        bool ok = murmur_decrypt_packet(enc_key, rx_ctr, 1, 0, payload, 6, mac, 14);
         ASSERT_EQ(ok, true, "decrypt");
         ASSERT_MEM_EQ(payload, rc_data, 6, "data");
     }
@@ -373,7 +395,7 @@ static void test_forgery_rejected(void)
     uint8_t key[16], uid[6];
     murmur_derive_keys("legit-phrase", key, uid);
     uint8_t fake[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-    ASSERT_EQ(murmur_decrypt_packet(key, 42, 1, fake, 6, 0x1234, 14), false, "should reject");
+    ASSERT_EQ(murmur_decrypt_packet(key, 42, 1, 0, fake, 6, 0x1234, 14), false, "should reject");
     PASS();
 }
 
@@ -394,6 +416,7 @@ int main(void)
     printf("\n[Packet encrypt/decrypt]\n");
     test_roundtrip_pkt4(); test_roundtrip_pkt8();
     test_wrong_key(); test_wrong_counter(); test_tampered(); test_different_counters();
+    test_wrong_direction(); test_direction_different_ciphertext();
 
     printf("\n[Counter reconstruction]\n");
     test_ctr_exact(); test_ctr_ahead(); test_ctr_wrap(); test_ctr_behind(); test_ctr_large();

@@ -795,6 +795,11 @@ void LostConnection(bool resumeRx)
 {
     DBGLN("lost conn fc=%d fo=%d", FreqCorrection, hwTimer::getFreqOffset());
 
+#if defined(MURMUR_ENCRYPT)
+    extern void MurmurResetCounter();
+    MurmurResetCounter();
+#endif
+
     setConnectionState(disconnected); //set lost connection
     RXtimerState = tim_disconnected;
     hwTimer::resetFreqOffset();
@@ -1064,6 +1069,10 @@ static bool ICACHE_RAM_ATTR ProcessRfPacket_SYNC(uint32_t const now, OTA_Sync_s 
         //DBGLN("\r\n%ux%ux%u", OtaNonce, otaSync->nonce, otaSync->fhssIndex);
         FHSSsetCurrIndex(otaSync->fhssIndex);
         OtaNonce = otaSync->nonce;
+#if defined(MURMUR_ENCRYPT)
+        extern void MurmurResetCounter();
+        MurmurResetCounter();
+#endif
         TentativeConnection(now);
         // connectionHasModelMatch must come after TentativeConnection, which resets it
         connectionHasModelMatch = modelMatched;
@@ -1646,6 +1655,10 @@ static void EnterBindingMode()
     // Binding uses 50Hz, and InvertIQ
     OtaCrcInitializer = OTA_VERSION_ID;
     OtaNonce = 0;
+#if defined(MURMUR_ENCRYPT)
+    extern void MurmurResetCounter();
+    MurmurResetCounter();
+#endif
     InBindingMode = true;
 
     // Start attempting to bind
@@ -2009,9 +2022,9 @@ void setup()
 
         setupBindingFromConfig();
 #if defined(MURMUR_ENCRYPT)
-        extern void MurmurInitFromUid(const uint8_t uid[6]);
-        MurmurInitFromUid(UID);
-        DBGLN("MurmurLRS: encryption active");
+        extern void MurmurInitFromUid(const uint8_t uid[6], bool is_tx);
+        MurmurInitFromUid(UID, false);
+        DBGLN("MurmurLRS: encryption active (RX)");
 #endif
 
         FHSSrandomiseFHSSsequence(uidMacSeedGet());

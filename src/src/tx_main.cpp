@@ -493,6 +493,10 @@ void SetRFLinkRate(uint8_t index) // Set speed of RF link
   // InitialFreq has been set, so lets also reset the FHSS Idx and Nonce.
   FHSSsetCurrIndex(0);
   OtaNonce = 0;
+#if defined(MURMUR_ENCRYPT)
+  extern void MurmurResetCounter();
+  MurmurResetCounter();
+#endif
 
   OtaUpdateSerializers(newSwitchMode, ModParams->PayloadLength);
   DataUlSender.setMaxPackageIndex(ELRS_MSP_MAX_PACKAGES);
@@ -1419,9 +1423,9 @@ void setup()
 
     setupBindingFromConfig();
 #if defined(MURMUR_ENCRYPT)
-    extern void MurmurInitFromUid(const uint8_t uid[6]);
-    MurmurInitFromUid(UID);
-    DBGLN("MurmurLRS: encryption active");
+    extern void MurmurInitFromUid(const uint8_t uid[6], bool is_tx);
+    MurmurInitFromUid(UID, true);
+    DBGLN("MurmurLRS: encryption active (TX)");
 #endif
     FHSSrandomiseFHSSsequence(uidMacSeedGet());
 
