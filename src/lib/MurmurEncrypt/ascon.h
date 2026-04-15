@@ -36,14 +36,6 @@ int ascon128_decrypt(const uint8_t key[16], const uint8_t nonce[16],
                      const uint8_t *c, uint64_t c_len,
                      uint8_t *m);
 
-/* ASCON-128 AEAD decryption without tag verification
- * Returns the full 16-byte tag that WOULD have been expected.
- */
-void ascon128_decrypt_no_verify(const uint8_t key[16], const uint8_t nonce[16],
-                                const uint8_t *ad, uint64_t ad_len,
-                                const uint8_t *c, uint64_t c_len,
-                                uint8_t *m, uint8_t expected_tag[16]);
-
 /* ASCON-XOF (eXtendable-Output Function)
  * in: input data
  * in_len: length of input data

@@ -19,6 +19,7 @@ extern uint8_t UID[6];
 #if defined(MURMUR_ENCRYPT)
 extern "C" {
 #include "murmur.h"
+#include "ascon.h"
 }
 
 static uint8_t murmur_key[16];
@@ -46,10 +47,11 @@ static uint32_t ICACHE_RAM_ATTR MurmurGetCounter()
 
 void MurmurInitFromUid(const uint8_t uid[6], bool is_tx)
 {
-    uint8_t zeros[16] = {0};
-    uint8_t master[16];
-    murmur_cmac(zeros, uid, 6, master);
-    murmur_cmac(master, (const uint8_t *)"murmur-enc", 10, murmur_key);
+    /* Derive encryption key from UID using ASCON-XOF (same KDF as murmur_derive_keys,
+     * but here we start from the UID rather than the binding phrase). */
+    uint8_t derived[16];
+    ascon_xof(uid, 6, derived, 16);
+    memcpy(murmur_key, derived, 16);
 
     murmur_nonce_epoch = 0;
     murmur_prev_nonce = 0;
