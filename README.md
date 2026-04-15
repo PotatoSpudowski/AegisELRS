@@ -1,7 +1,7 @@
 # MurmurLRS
 
-[![Crypto Tests](https://img.shields.io/badge/crypto%20tests-32%2F32%20pass-brightgreen?style=flat-square)](src/lib/MurmurEncrypt/)
-[![AES-128](https://img.shields.io/badge/AES--128--CTR%20%2B%20CMAC-NIST%20verified-blue?style=flat-square)](src/lib/MurmurEncrypt/test_murmur.c)
+[![Crypto Tests](https://img.shields.io/badge/crypto%20tests-29%2F29%20pass-brightgreen?style=flat-square)](src/lib/MurmurEncrypt/)
+[![ASCON-128](https://img.shields.io/badge/ASCON--128%20AEAD-NIST%20SP%20800--232-blue?style=flat-square)](https://csrc.nist.gov/pubs/sp/800/232/ipd)
 [![Reddit](https://img.shields.io/badge/r%2Ffpv-423%2B%20upvotes-orange?style=flat-square&logo=reddit)](https://www.reddit.com/r/fpv/comments/1sl5hf1/)
 [![License](https://img.shields.io/github/license/PotatoSpudowski/MurmurLRS?style=flat-square)](https://github.com/PotatoSpudowski/MurmurLRS/blob/master/LICENSE)
 
@@ -52,30 +52,56 @@ If you don't see this, make sure your binding phrase is set in the Configurator 
 
 ### How's the performance?
 
-Identical to stock ELRS at the same version. ASCON-128 encryption is designed to be extremely lightweight. At 250 Hz, total overhead is negligible.
+Identical to stock ELRS at the same version. MurmurLRS uses [ASCON-128](https://csrc.nist.gov/pubs/sp/800/232/ipd), the NIST lightweight cryptography standard (SP 800-232), selected in 2023 specifically for resource-constrained devices. It does authenticated encryption in a single pass -- no separate encrypt and MAC steps.
 
-| Feature              | MurmurLRS  | Stock ELRS |
-| :------------------- | :--------- | :--------- |
-| Latency added        | TBD        | --         |
-| CPU overhead (250Hz) | TBD        | --         |
-| Packet size          | Same       | Same       |
-| Air rate             | Same       | Same       |
-| Range                | Same       | Same       |
+Benchmarked on ESP32 at 240 MHz, 10,000 iterations per measurement:
+
+| Implementation        | Packet4 (6B) | Packet8 (10B) | Notes                                    |
+| :-------------------- | :----------- | :------------ | :--------------------------------------- |
+| AES-128 CTR+CMAC (SW) | ~94 us/pkt  | ~94 us/pkt    | Software AES, 3 block ops + key expansion per call |
+| AES-128 CTR+CMAC (HW) | ~34 us/pkt  | ~34 us/pkt    | ESP32 hardware AES accelerator via mbedTLS |
+| ChaCha20 (encrypt-only) | ~24 us/pkt | ~25 us/pkt   | No authentication, no MAC (PrivacyLRS approach) |
+| **ASCON-128 AEAD**    | **~22 us/pkt** | **~26 us/pkt** | **Pure software, single-pass AEAD**     |
+
+ASCON-128 is 3.5-4.3x faster than software AES and still ~35% faster than hardware-accelerated AES on ESP32. And since ASCON is pure software with no hardware dependencies, it runs at the same speed on ESP8285 and STM32 targets that lack AES acceleration.
+
+Notable: ChaCha20 encrypt-only (no authentication) clocks in at ~24 us/pkt. ASCON-128 does full authenticated encryption at ~22 us/pkt for small packets. So ASCON with authentication is the same speed or faster than ChaCha20 without it.
+
+At 500 Hz, ASCON adds 1.3% CPU overhead. At 250 Hz, 0.6%. You won't notice it.
+
+| Feature              | MurmurLRS      | Stock ELRS |
+| :------------------- | :------------- | :--------- |
+| Latency added        | ~22-26 us/pkt  | --         |
+| CPU overhead (500Hz) | 1.3%           | --         |
+| Packet size          | Same           | Same       |
+| Air rate             | Same           | Same       |
+| Range                | Same           | Same       |
+
+### Why ASCON over AES?
+
+[ASCON](https://csrc.nist.gov/pubs/sp/800/232/ipd) was selected by NIST in 2023 as the standard for lightweight cryptography after a multi-year competition. It was designed from the ground up for exactly this use case: authenticated encryption on microcontrollers with tight CPU and memory budgets.
+
+The previous MurmurLRS implementation used AES-128-CTR for encryption and AES-128-CMAC for authentication as separate steps (encrypt-then-MAC). This worked correctly but had two downsides:
+
+1. **Performance**: Three separate AES block operations per packet, each requiring a full key schedule expansion. Software AES measured ~94 us/pkt -- 10x slower than originally estimated.
+2. **Complexity**: Manually composing CTR mode encryption with CMAC authentication is an error-prone pattern. ASCON does both in a single AEAD call, eliminating composition bugs by construction.
+
+ASCON-128 provides the same security guarantees (128-bit key, authenticated encryption, replay protection) in a single-pass sponge construction with no key schedule overhead.
 
 ### What's different from PrivacyLRS?
 
 Both projects add encryption to ELRS. The difference is **authentication**:
 
-| Feature               | MurmurLRS (ASCON)         | MurmurLRS (AES)           | PrivacyLRS (ChaCha)                      |
-| :-------------------- | :------------------------ | :------------------------ | :--------------------------------------- |
-| Encryption            | ASCON-128 AEAD            | AES-128-CTR               | ChaCha20                                 |
-| Packet authentication | ASCON-128 AEAD (keyed)    | AES-CMAC (keyed MAC)      | CRC only (not keyed)                     |
-| Bit-flip resistance   | Tampered packets rejected | Tampered packets rejected | Vulnerable (stream cipher is malleable)  |
-| Replay protection     | 64-packet sliding window  | 64-packet sliding window  | 8-bit counter (wraps at 256)             |
-| Key derivation        | ASCON-XOF KDF             | AES-CMAC KDF              | Binding phrase direct                    |
-| Overhead              | TBD                       | ~9 us/pkt                 | ~3.5 us/pkt                              |
+| Feature               | MurmurLRS                 | PrivacyLRS                               |
+| :-------------------- | :------------------------ | :--------------------------------------- |
+| Encryption            | ASCON-128 AEAD            | ChaCha20                                 |
+| Packet authentication | ASCON-128 AEAD (keyed)    | CRC only (not keyed)                     |
+| Bit-flip resistance   | Tampered packets rejected | Vulnerable (stream cipher is malleable)  |
+| Replay protection     | 64-packet sliding window  | 8-bit counter (wraps at 256)             |
+| Key derivation        | ASCON-XOF KDF             | Binding phrase direct                    |
+| Overhead              | ~22 us/pkt (full AEAD)    | ~24 us/pkt (encrypt-only)                |
 
-PrivacyLRS encrypts with ChaCha20 but doesn't authenticate. That means an attacker can flip bits in your encrypted packets and the receiver silently accepts corrupted data. MurmurLRS uses ASCON-128 AEAD -- any tampered packet is rejected.
+Both projects add encryption to ELRS. PrivacyLRS uses ChaCha20 for encryption, MurmurLRS uses [ASCON-128 AEAD](https://csrc.nist.gov/pubs/sp/800/232/ipd) which combines encryption and authentication in a single pass. The main difference is that MurmurLRS authenticates every packet, so tampered or injected packets are rejected rather than silently accepted.
 
 ### Is this compatible with stock ELRS?
 
@@ -141,11 +167,11 @@ SYNC packets remain unencrypted for connection establishment.
 <summary>Technical details</summary>
 
 **Cryptographic primitives:**
-- ASCON-128 AEAD for encryption and authentication (NIST SP 800-232)
+- [ASCON-128](https://csrc.nist.gov/pubs/sp/800/232/ipd) AEAD for encryption and authentication (NIST SP 800-232)
 - ASCON-XOF for key derivation (NIST SP 800-232)
 - Direction-separated nonces (uplink=0, downlink=1) to prevent keystream reuse
 - 32-bit counter derived from OtaNonce with epoch tracking
-- Full header byte included in AEAD AD (authenticates packet type, flags, and metadata)
+- Counter, packet type, and direction bound via nonce (authenticated through ASCON initialization)
 - 64-packet sliding window replay protection
 - Automatic counter reset on SYNC resync, link loss, and rebind
 
@@ -189,6 +215,13 @@ Looking for people willing to bench test or fly with it, especially on ESP8266 a
 - **Configurator UI** -- adding encryption toggle to the ELRS web interface
 
 ## Changelog
+
+### v0.4 (2026-04-16)
+- Replaced AES-128-CTR + AES-CMAC with ASCON-128 AEAD ([NIST SP 800-232](https://csrc.nist.gov/pubs/sp/800/232/ipd))
+- Single-pass authenticated encryption: 3.5-4.3x faster than software AES, ~35% faster than hardware-accelerated AES
+- ASCON-XOF key derivation replaces AES-CMAC KDF
+- Benchmarked on ESP32 at 240 MHz: ~22 us/pkt (Packet4), ~26 us/pkt (Packet8)
+- 29/29 crypto tests including official ASCON-128 vectors
 
 ### v0.3 (2025-04-15)
 - Encryption now auto-enables when a binding phrase is set -- no manual flags needed

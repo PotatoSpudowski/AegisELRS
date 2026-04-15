@@ -11,6 +11,12 @@
 #include "ascon.h"
 #include <string.h>
 
+/* Internal ASCON function -- not part of the public API */
+void ascon128_decrypt_no_verify(const uint8_t key[16], const uint8_t nonce[16],
+                                const uint8_t *ad, uint64_t ad_len,
+                                const uint8_t *c, uint64_t c_len,
+                                uint8_t *m, uint8_t expected_tag[16]);
+
 /* ------------------------------------------------------------------ */
 /*  Key derivation                                                     */
 /* ------------------------------------------------------------------ */
@@ -56,6 +62,9 @@ uint16_t murmur_encrypt_packet(const uint8_t enc_key[16],
                                uint8_t *payload, uint8_t payload_len,
                                uint8_t mac_bits)
 {
+    if (payload_len > 16)
+        return 0;
+
     uint8_t nonce[16];
     uint8_t ciphertext[16 + 16]; // payload + tag
 
@@ -81,6 +90,9 @@ bool murmur_decrypt_packet(const uint8_t enc_key[16],
                            uint8_t *payload, uint8_t payload_len,
                            uint16_t received_mac, uint8_t mac_bits)
 {
+    if (payload_len > 16)
+        return false;
+
     uint8_t nonce[16];
     uint8_t expected_tag[16];
     uint8_t decrypted[16];
