@@ -17,26 +17,22 @@ MurmurLRS encrypts and authenticates every RC packet over the air. Your stick in
 git clone https://github.com/PotatoSpudowski/MurmurLRS
 ```
 
-### Step 2: Enable encryption
-
-Open `src/user_defines.txt` and add these two lines:
-
-```
--DMURMUR_ENCRYPT
--DMY_BINDING_PHRASE="your secret phrase here"
-```
-
-Use a strong binding phrase (3-4 random words minimum). This becomes your encryption key. **Same phrase on both TX and RX.**
-
-### Step 3: Flash with ELRS Configurator
+### Step 2: Flash with ELRS Configurator
 
 1. Open the [ELRS Configurator](https://github.com/ExpressLRS/ExpressLRS-Configurator/releases)
 2. Go to the **Local** tab
 3. Point it at the `src` folder inside the cloned repo
-4. Select your TX target, flash
-5. Select your RX target, flash
+4. **Set your binding phrase** as you normally would. Use a strong phrase (3-4 random words minimum). **Same phrase on both TX and RX.**
+5. Select your TX target, flash
+6. Select your RX target, flash
 
-### Step 4: Verify
+That's it. Encryption is automatically enabled when a binding phrase is set. No extra flags or config files needed -- the build system detects the binding phrase and activates MurmurLRS encryption. In the build log you'll see:
+
+```
+MurmurLRS: encryption enabled
+```
+
+### Step 3: Verify
 
 Connect your TX or RX over USB and open a serial monitor (420000 baud). You should see at boot:
 
@@ -48,7 +44,7 @@ or
 MurmurLRS: encryption active (RX)
 ```
 
-If you don't see this, the build flag didn't get picked up. Check that `-DMURMUR_ENCRYPT` is in `user_defines.txt` (not `common.ini` or elsewhere).
+If you don't see this, make sure your binding phrase is set in the Configurator and that you're building from the MurmurLRS source (Local tab), not from stock ELRS.
 
 **Important:** Both TX and RX must be flashed with MurmurLRS. A MurmurLRS TX will not connect to a stock ELRS RX (and vice versa). If one side has encryption and the other doesn't, SYNC packets will get through but all data packets will fail -- you'll see the link flicker but never fully connect.
 
@@ -167,6 +163,7 @@ master_key -> AES-CMAC(master, "murmur-uid") -> UID (6 bytes, ELRS compatible)
 |------|--------|
 | `src/lib/MurmurEncrypt/*` | New: encryption module (~500 LOC pure C) |
 | `src/lib/OTA/OTA.cpp` | Wraps CRC functions with encrypt/decrypt, counter tracking |
+| `src/python/build_flags.py` | Auto-enable encryption when binding phrase is set |
 | `src/src/tx_main.cpp` | Init encryption at boot, counter reset on rate change |
 | `src/src/rx_main.cpp` | Init encryption at boot, counter reset on SYNC/disconnect/bind |
 
@@ -192,6 +189,27 @@ Looking for people willing to bench test or fly with it, especially on ESP8266 a
 - **Review the crypto** -- < 500 lines of auditable C in `src/lib/MurmurEncrypt/`
 - **ESP8266/STM32 testing** -- primary development is on ESP32
 - **Configurator UI** -- adding encryption toggle to the ELRS web interface
+
+## Changelog
+
+### v0.3 (2025-04-15)
+- Encryption now auto-enables when a binding phrase is set -- no manual flags needed
+- Synced with upstream ExpressLRS (up to 6cd45f56)
+- Added community section and badges to README
+
+### v0.2 (2025-04-14)
+- Fixed counter desync: counter now derived from OtaNonce with epoch tracking
+- Added direction-separated nonces (uplink=0, downlink=1) to prevent keystream reuse
+- Full header byte authenticated in MAC (not just 2-bit packet type)
+- Added MurmurResetCounter() at all connection lifecycle points (SYNC resync, link loss, rebind, rate change)
+- 32/32 crypto tests (added direction validation tests)
+
+### v0.1 (2025-04-13)
+- Initial release: AES-128-CTR encryption + AES-128-CMAC authentication
+- Zero packet overhead (MAC replaces CRC field)
+- 64-packet sliding window replay protection
+- AES-CMAC key derivation from binding phrase
+- 30/30 crypto tests including NIST and RFC reference vectors
 
 ## About ExpressLRS
 
